@@ -1,0 +1,11 @@
+{
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "openai": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
