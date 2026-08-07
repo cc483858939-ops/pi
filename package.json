@@ -1,11 +1,23 @@
 {
+  "name": "mini-pi",
+  "version": "0.2.0",
+  "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "tsx --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
   },
   "dependencies": {
-    "openai": "latest",
-    "tsx": "latest",
-    "typescript": "latest"
+    "openai": "6.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.9",
+    "tsx": "4.22.5",
+    "typescript": "5.8.3"
   }
 }
