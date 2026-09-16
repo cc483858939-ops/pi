@@ -1,6 +1,8 @@
 # Mini Pi Agent
 
-Mini Pi Agent is a minimal local coding agent for Node.js projects. It connects to an OpenAI-compatible Chat Completions endpoint (Ollama by default) and provides a complete coding loop: read files, make precise edits or write files, run commands, inspect failures, and retry until validation succeeds.
+Mini Pi Agent is a small, testable Agent Runtime for Node.js projects. The CLI bootstraps an injectable runtime, which talks to an OpenAI-compatible Chat Completions endpoint (Ollama by default) and exposes bounded `read`, `write`, `edit`, and `bash` tools.
+
+The runtime owns message history, sequential tool execution, structured tool results, and the configured maximum number of model rounds. The CLI owns configuration, the one-shot question, and final output.
 
 ## Requirements
 
@@ -60,22 +62,26 @@ npm test
 npm run check
 ```
 
-Tests use Node.js `node:test`, real temporary directories, real filesystem operations, real local child processes, and a deterministic fake chat model. They do not call Ollama or external APIs.
+Tests use Node.js `node:test`, real temporary directories, real filesystem operations, and a deterministic fake chat model. They do not call Ollama, external APIs, or require network access.
 
 ## Security warning
 
 **The `bash` tool executes commands with the current operating-system user's permissions. Restricting the working directory is not a security sandbox. Commands can access resources outside the project. Do not run untrusted models or tasks in environments containing sensitive files or high-privilege credentials.**
 
-This milestone intentionally does not implement Docker or OS-level sandboxing, command approval, or command blacklists. A blacklist would not provide reliable isolation.
+This runtime intentionally does not implement Docker or OS-level sandboxing, command approval, or command blacklists. A blacklist would not provide reliable isolation.
 
 ## Current limitations
 
-- No TUI or streaming interface
-- No session persistence, branching, or context compaction
-- No MCP, skills, extensions, provider UI, or multi-agent execution
+- No TUI
+- No streaming UI
+- No sessions, branching, or context compaction
+- No MCP or extensions
+- No provider or model selection UI
+- No multi-agent execution
 - Tool calls run sequentially
-- Text-only file tools; no Base64 or binary editing
+- Text-only file tooling; no Base64 or binary editing
+- No OS-level sandbox
 
 ## Roadmap
 
-Potential later milestones include an interactive UI, persistent sessions, context compaction, approval policies, provider management, extension support, and stronger process isolation. These are not part of Milestone 2.
+Potential later milestones include an interactive UI, persistent sessions, context compaction, approval policies, provider management, extension support, and stronger process isolation. These are not part of this runtime refactor.
