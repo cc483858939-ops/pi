@@ -4,6 +4,16 @@ Mini Pi Agent is a small, testable Agent Runtime for Node.js projects. The CLI b
 
 The runtime owns message history, sequential tool execution, structured tool results, and the configured maximum number of model rounds. The CLI owns configuration, the one-shot question, and final output.
 
+The runtime also exposes lifecycle events without enabling model token streaming:
+
+```ts
+for await (const event of agent.stream("...")) {
+  console.log(event);
+}
+```
+
+Events are `round_start`, `assistant`, `tool_start`, `tool_result`, `final`, and `error`. Model requests still use `stream: false`; these events describe runtime activity rather than token deltas.
+
 ## Requirements
 
 - Node.js 20 or newer
@@ -99,7 +109,7 @@ This runtime intentionally does not implement Docker or OS-level sandboxing, com
 ## Current limitations
 
 - No TUI
-- No streaming UI
+- Runtime lifecycle events are available, but model token streaming and a streaming UI are not implemented
 - No sessions, branching, or context compaction
 - No MCP or extensions
 - No provider or model selection UI
