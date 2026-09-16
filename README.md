@@ -30,11 +30,37 @@ ollama pull qwen3.5:9b
 | `MINI_PI_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI-compatible API base URL |
 | `MINI_PI_API_KEY` | `ollama` | API key sent to the SDK |
 | `MINI_PI_MODEL` | `qwen3.5:9b` | Chat model name |
+| `MINI_PI_THINKING` | unset | Optional DeepSeek-compatible thinking mode: `enabled` or `disabled` |
 | `MINI_PI_MAX_ROUNDS` | `20` | Maximum model responses per run |
 | `MINI_PI_BASH_TIMEOUT_MS` | `30000` | Default Bash timeout; maximum 300000 ms |
 | `MINI_PI_MAX_TOOL_OUTPUT_BYTES` | `65536` | Maximum tool output size in bytes |
 
-Invalid numeric configuration fails during startup.
+`MINI_PI_THINKING` is optional. If omitted, Mini Pi leaves thinking behavior to the API provider/model and does not send a `thinking` field. Invalid values fail during startup; only `enabled` and `disabled` are accepted.
+
+Invalid numeric configuration also fails during startup.
+
+For a DeepSeek-compatible API, thinking can be disabled explicitly:
+
+```powershell
+$env:MINI_PI_BASE_URL="https://api.deepseek.com"
+$env:MINI_PI_API_KEY="YOUR_DEEPSEEK_API_KEY"
+$env:MINI_PI_MODEL="deepseek-flash"
+$env:MINI_PI_THINKING="disabled"
+
+npm.cmd run dev -- "读取 package.json，告诉我项目名称"
+```
+
+Re-enable thinking with:
+
+```powershell
+$env:MINI_PI_THINKING="enabled"
+```
+
+To return to provider-default behavior, remove the setting:
+
+```powershell
+Remove-Item Env:MINI_PI_THINKING -ErrorAction SilentlyContinue
+```
 
 ## Usage
 
