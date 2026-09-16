@@ -1,6 +1,6 @@
 # Mini Pi Agent
 
-Mini Pi Agent is a small, testable Agent Runtime for Node.js projects. The CLI bootstraps an injectable runtime, which talks to an OpenAI-compatible Chat Completions endpoint (Ollama by default) and exposes bounded `read`, `write`, `edit`, and `bash` tools.
+Mini Pi Agent is a small, testable Agent Runtime for Node.js projects. The CLI bootstraps an injectable runtime, which talks to an OpenAI-compatible Chat Completions endpoint (Atria Dawn Preview by default) and exposes bounded `read`, `write`, `edit`, and `bash` tools.
 
 The runtime owns message history, sequential tool execution, structured tool results, and the configured maximum number of model rounds. The CLI owns configuration, the one-shot question, and final output.
 
@@ -18,7 +18,7 @@ Events are `round_start`, `assistant`, `tool_start`, `tool_result`, `final`, and
 
 - Node.js 20 or newer
 - npm
-- Ollama or another OpenAI-compatible Chat Completions server
+- An Atria API key, or credentials for another OpenAI-compatible Chat Completions server
 
 ## Install
 
@@ -26,7 +26,7 @@ Events are `round_start`, `assistant`, `tool_start`, `tool_result`, `final`, and
 npm install
 ```
 
-For the default configuration, start Ollama and make sure the configured model is available:
+For a local OpenAI-compatible server, start it and make sure the configured model is available. For example, with Ollama:
 
 ```bash
 ollama serve
@@ -37,36 +37,37 @@ ollama pull qwen3.5:9b
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MINI_PI_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI-compatible API base URL |
-| `MINI_PI_API_KEY` | `ollama` | API key sent to the SDK |
-| `MINI_PI_MODEL` | `qwen3.5:9b` | Chat model name |
-| `MINI_PI_THINKING` | unset | Optional DeepSeek-compatible thinking mode: `enabled` or `disabled` |
+| `MINI_PI_BASE_URL` | `https://api.atria-asi.ai/v1` | OpenAI-compatible API base URL |
+| `MINI_PI_API_KEY` | unset | Preferred API key; takes precedence over `ATRIA_API_KEY` |
+| `ATRIA_API_KEY` | unset | Fallback Atria API key |
+| `MINI_PI_MODEL` | `Atria-Dawn-Preview` | Chat model name |
 | `MINI_PI_MAX_ROUNDS` | `20` | Maximum model responses per run |
 | `MINI_PI_BASH_TIMEOUT_MS` | `30000` | Default Bash timeout; maximum 300000 ms |
 | `MINI_PI_MAX_TOOL_OUTPUT_BYTES` | `65536` | Maximum tool output size in bytes |
 
-`MINI_PI_THINKING` is optional. If omitted, Mini Pi leaves thinking behavior to the API provider/model and does not send a `thinking` field. Invalid values fail during startup; only `enabled` and `disabled` are accepted.
+Mini Pi resolves the API key from `MINI_PI_API_KEY` first, then `ATRIA_API_KEY`. Empty or whitespace-only values are treated as unset. Startup fails with `MINI_PI_API_KEY or ATRIA_API_KEY must be set.` when neither variable contains a usable key.
 
 Invalid numeric configuration also fails during startup.
 
-For a DeepSeek-compatible API, thinking can be disabled explicitly:
+The default Atria configuration can be used from PowerShell with:
 
 ```powershell
-$env:MINI_PI_BASE_URL="https://api.deepseek.com"
-$env:MINI_PI_API_KEY="YOUR_DEEPSEEK_API_KEY"
-$env:MINI_PI_MODEL="deepseek-flash"
-$env:MINI_PI_THINKING="disabled"
+$env:ATRIA_API_KEY="YOUR_ATRIA_API_KEY"
 
-npm.cmd run dev -- "读取 package.json，告诉我项目名称"
+npm.cmd run dev -- "读取 package.json，告诉我项目名称，不要修改任何文件"
 ```
 
-Re-enable thinking with:
+The explicit equivalent is:
 
 ```powershell
-$env:MINI_PI_THINKING="enabled"
+$env:MINI_PI_BASE_URL="https://api.atria-asi.ai/v1"
+$env:MINI_PI_API_KEY="YOUR_ATRIA_API_KEY"
+$env:MINI_PI_MODEL="Atria-Dawn-Preview"
+
+npm.cmd run dev -- "读取 package.json，告诉我项目名称，不要修改任何文件"
 ```
 
-To return to provider-default behavior, remove the setting:
+If an older shell still has the removed thinking variable, clean it up with:
 
 ```powershell
 Remove-Item Env:MINI_PI_THINKING -ErrorAction SilentlyContinue

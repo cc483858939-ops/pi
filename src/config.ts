@@ -2,13 +2,10 @@ export interface Config {
   baseURL: string;
   apiKey: string;
   model: string;
-  thinking?: ThinkingMode;
   maxRounds: number;
   bashTimeoutMs: number;
   maxToolOutputBytes: number;
 }
-
-export type ThinkingMode = "enabled" | "disabled";
 
 function positiveNumber(name: string, value: string, options: { integer?: boolean; max?: number } = {}): number {
   const parsed = Number(value);
@@ -24,23 +21,25 @@ function positiveNumber(name: string, value: string, options: { integer?: boolea
   return parsed;
 }
 
-function optionalThinkingMode(name: string, value: string | undefined): ThinkingMode | undefined {
-  if (value === undefined) {
-    return undefined;
+function requireApiKey(env: NodeJS.ProcessEnv): string {
+  const miniPiKey = env.MINI_PI_API_KEY?.trim();
+  if (miniPiKey) {
+    return miniPiKey;
   }
-  if (value === "enabled" || value === "disabled") {
-    return value;
+
+  const atriaKey = env.ATRIA_API_KEY?.trim();
+  if (atriaKey) {
+    return atriaKey;
   }
-  throw new Error(`${name} must be either "enabled" or "disabled".`);
+
+  throw new Error("MINI_PI_API_KEY or ATRIA_API_KEY must be set.");
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const thinking = optionalThinkingMode("MINI_PI_THINKING", env.MINI_PI_THINKING);
   return {
-    baseURL: env.MINI_PI_BASE_URL ?? "http://127.0.0.1:11434/v1",
-    apiKey: env.MINI_PI_API_KEY ?? "ollama",
-    model: env.MINI_PI_MODEL ?? "qwen3.5:9b",
-    ...(thinking === undefined ? {} : { thinking }),
+    baseURL: env.MINI_PI_BASE_URL ?? "https://api.atria-asi.ai/v1",
+    apiKey: requireApiKey(env),
+    model: env.MINI_PI_MODEL ?? "Atria-Dawn-Preview",
     maxRounds: positiveNumber("MINI_PI_MAX_ROUNDS", env.MINI_PI_MAX_ROUNDS ?? "20", { integer: true }),
     bashTimeoutMs: positiveNumber("MINI_PI_BASH_TIMEOUT_MS", env.MINI_PI_BASH_TIMEOUT_MS ?? "30000", { max: 300000 }),
     maxToolOutputBytes: positiveNumber("MINI_PI_MAX_TOOL_OUTPUT_BYTES", env.MINI_PI_MAX_TOOL_OUTPUT_BYTES ?? "65536", { integer: true }),

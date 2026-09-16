@@ -37,7 +37,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const client = createChatClient({
       baseURL: config.baseURL,
       apiKey: config.apiKey,
-      ...(config.thinking === undefined ? {} : { thinking: config.thinking }),
     });
     const agent = new Agent({
       client,
