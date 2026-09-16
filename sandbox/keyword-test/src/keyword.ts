@@ -134,6 +134,12 @@ export class KeywordRecognizer {
     if (!this.#ignoreCase) {
       return matched;
     }
+    // When several keywords differ only by case, the one whose casing is
+    // exactly the matched text wins; otherwise fall back to the first
+    // case-insensitive equivalent.
+    if (this.#keywords.includes(matched)) {
+      return matched;
+    }
     const lower = matched.toLowerCase();
     return (
       this.#keywords.find((keyword) => keyword.toLowerCase() === lower) ??

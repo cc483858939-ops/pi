@@ -94,3 +94,20 @@ test("test returns false for text without keywords", () => {
   const recognizer = new KeywordRecognizer(["fatal"]);
   assert.equal(recognizer.test("everything is fine"), false);
 });
+
+test("case-variant keywords resolve to the exact-case keyword", () => {
+  const recognizer = new KeywordRecognizer(["Error", "error"]);
+
+  assert.deepEqual(
+    recognizer.find("error").map((match) => match.keyword),
+    ["error"],
+  );
+  assert.deepEqual(
+    recognizer.find("Error").map((match) => match.keyword),
+    ["Error"],
+  );
+  assert.deepEqual(
+    recognizer.find("ERROR").map((match) => match.keyword),
+    ["Error"],
+  );
+});
