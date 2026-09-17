@@ -11,7 +11,7 @@ import type {
   ChatRequest,
   ChatResponse,
 } from "../src/llm/client.ts";
-import { SkillRegistry, MAX_SKILL_BYTES } from "../src/skills/registry.ts";
+import { SkillRegistry, MAX_SKILL_BYTES, SKILL_METADATA_BYTES } from "../src/skills/registry.ts";
 import { buildSystemPrompt } from "../src/skills/prompt.ts";
 import { createLoadSkillTool } from "../src/tools/load-skill.ts";
 import { executeTool, type ToolContext } from "../src/tools/types.ts";
@@ -139,23 +139,138 @@ test("rejects invalid and missing skill names", async () => {
   }
 });
 
-test("rejects oversized, NUL-containing, and invalid UTF-8 skills", async () => {
+test("excludes oversized skills and rejects invalid full content", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
   try {
     await mkdir(path.join(root, "large"));
     await mkdir(path.join(root, "binary"));
     await mkdir(path.join(root, "invalid"));
     await writeFile(path.join(root, "large", "SKILL.md"), Buffer.alloc(MAX_SKILL_BYTES + 1, 0x61));
-    await writeFile(path.join(root, "binary", "SKILL.md"), Buffer.from([0x23, 0x20, 0x00, 0x0a]));
-    await writeFile(path.join(root, "invalid", "SKILL.md"), Buffer.from([0xc3, 0x28]));
+    await writeFile(path.join(root, "binary", "SKILL.md"), "# Binary\n", "utf8");
+    await writeFile(path.join(root, "invalid", "SKILL.md"), "# Invalid\n", "utf8");
     const registry = new SkillRegistry(root);
 
-    for (const [name, code] of [["large", "SKILL_TOO_LARGE"], ["binary", "INVALID_SKILL_CONTENT"], ["invalid", "INVALID_SKILL_CONTENT"]] as const) {
+    const discovered = await registry.list();
+    assert.deepEqual(discovered.map((skill) => skill.name), ["binary", "invalid"]);
+
+    await assert.rejects(
+      () => registry.load("large"),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "SKILL_NOT_FOUND",
+    );
+
+    await writeFile(path.join(root, "binary", "SKILL.md"), Buffer.from([0x23, 0x20, 0x00, 0x0a]));
+    await writeFile(path.join(root, "invalid", "SKILL.md"), Buffer.from([0xc3, 0x28]));
+    for (const name of ["binary", "invalid"] as const) {
       await assert.rejects(
         () => registry.load(name),
-        (error: unknown) => error instanceof Error && "code" in error && error.code === code,
+        (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SKILL_CONTENT",
       );
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("discovers a large valid skill from bounded metadata", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  try {
+    await mkdir(path.join(root, "testing"));
+    const content = `# Testing\n\n${"x".repeat(SKILL_METADATA_BYTES * 2)}`;
+    assert.ok(Buffer.byteLength(content) > SKILL_METADATA_BYTES);
+    assert.ok(Buffer.byteLength(content) < MAX_SKILL_BYTES);
+    await writeFile(path.join(root, "testing", "SKILL.md"), content, "utf8");
+
+    const skills = await new SkillRegistry(root).list();
+
+    assert.deepEqual(skills.map((skill) => skill.name), ["testing"]);
+    assert.equal(skills[0]?.description, "Testing");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("accepts a UTF-8 character split at the metadata boundary", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  try {
+    await mkdir(path.join(root, "testing"));
+    const prefix = "# Testing\n\n";
+    const filler = "a".repeat(SKILL_METADATA_BYTES - Buffer.byteLength(prefix) - 1);
+    const content = `${prefix}${filler}你\n`;
+    assert.equal(Buffer.byteLength(prefix + filler), SKILL_METADATA_BYTES - 1);
+    await writeFile(path.join(root, "testing", "SKILL.md"), content, "utf8");
+
+    const skills = await new SkillRegistry(root).list();
+
+    assert.deepEqual(skills.map((skill) => skill.name), ["testing"]);
+    assert.equal(skills[0]?.description, "Testing");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("does not load a Skill added after discovery", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  try {
+    const registry = new SkillRegistry(root);
+    assert.deepEqual(await registry.list(), []);
+    await mkdir(path.join(root, "later"));
+    await writeFile(path.join(root, "later", "SKILL.md"), "# Later\n", "utf8");
+
+    await assert.rejects(
+      () => registry.load("later"),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "SKILL_NOT_FOUND",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("returns a controlled not-found failure when a discovered Skill is deleted", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  try {
+    await mkdir(path.join(root, "testing"));
+    const filePath = path.join(root, "testing", "SKILL.md");
+    await writeFile(filePath, "# Testing\n", "utf8");
+    const registry = new SkillRegistry(root);
+    assert.deepEqual((await registry.list()).map((skill) => skill.name), ["testing"]);
+    await rm(filePath);
+
+    await assert.rejects(
+      () => registry.load("testing"),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "SKILL_NOT_FOUND",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reads modified content for a Skill discovered earlier", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  try {
+    await mkdir(path.join(root, "testing"));
+    const filePath = path.join(root, "testing", "SKILL.md");
+    await writeFile(filePath, "# Testing\nVersion A\n", "utf8");
+    const registry = new SkillRegistry(root);
+    await registry.list();
+    await writeFile(filePath, "# Testing\nVersion B\n", "utf8");
+
+    const loaded = await registry.load("testing");
+
+    assert.equal(loaded.content, "# Testing\nVersion B\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("initializes discovery when load is called directly", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  try {
+    await mkdir(path.join(root, "testing"));
+    await writeFile(path.join(root, "testing", "SKILL.md"), "# Testing\n", "utf8");
+
+    const loaded = await new SkillRegistry(root).load("testing");
+
+    assert.equal(loaded.content, "# Testing\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

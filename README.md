@@ -114,7 +114,11 @@ Use this skill when validating code changes.
 - Do not claim success without execution evidence.
 ```
 
-Mini Pi scans Skills once at startup. Only each Skill's name and short description are added to the initial system prompt. When a listed Skill is relevant, the model can call `load_skill(name)`; the full `SKILL.md` then enters the next model round through the normal tool result and conversation history.
+Mini Pi discovers the available Skill set once per process/runtime startup. Discovery reads only bounded metadata/header content from each `SKILL.md`; the full body is read only when `load_skill` loads that discovered Skill. Only each Skill's name and short description are added to the initial system prompt.
+
+A Skill must exist during discovery to be available. Skills created after startup are not available until Mini Pi is restarted. If an already-discovered `SKILL.md` is edited later, `load_skill` reads the current file contents; if it is deleted, the tool returns a controlled failure.
+
+When a listed Skill is relevant, the model can call `load_skill(name)`; the full `SKILL.md` then enters the next model round through the normal tool result and conversation history.
 
 For example:
 

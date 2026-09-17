@@ -5,6 +5,7 @@ import { ToolError } from "../utils/errors.ts";
 import type { LoadedSkill, SkillMetadata } from "./types.ts";
 
 export const MAX_SKILL_BYTES = 64 * 1024;
+export const SKILL_METADATA_BYTES = 4096;
 
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const DESCRIPTION_LIMIT = 200;
@@ -12,6 +13,11 @@ const DESCRIPTION_LIMIT = 200;
 interface SkillFile {
   filePath: string;
   content: string;
+}
+
+interface SkillFileStat {
+  filePath: string;
+  size: number;
 }
 
 function isMissing(error: unknown): boolean {
@@ -59,11 +65,14 @@ export class SkillRegistry {
       throw invalidName(name);
     }
 
-    const skillFile = await this.readSkillFile(name);
+    const metadata = (await this.list()).find((skill) => skill.name === name);
+    if (metadata === undefined) {
+      throw new ToolError("SKILL_NOT_FOUND", `Skill not found: ${name}`);
+    }
+
+    const skillFile = await this.readSkillContent(name);
     return {
-      name,
-      path: skillFile.filePath,
-      description: descriptionFromContent(name, skillFile.content),
+      ...metadata,
       content: skillFile.content,
     };
   }
@@ -86,12 +95,7 @@ export class SkillRegistry {
       }
 
       try {
-        const skillFile = await this.readSkillFile(entry.name);
-        discovered.push({
-          name: entry.name,
-          path: skillFile.filePath,
-          description: descriptionFromContent(entry.name, skillFile.content),
-        });
+        discovered.push(await this.inspectSkillMetadata(entry.name));
       } catch {
         // Discovery is tolerant: invalid or incomplete skill directories are ignored.
       }
@@ -101,7 +105,7 @@ export class SkillRegistry {
     return discovered;
   }
 
-  private async readSkillFile(name: string): Promise<SkillFile> {
+  private async inspectSkillFile(name: string): Promise<SkillFileStat> {
     const skillDir = path.join(this.rootDir, name);
     if (!isInside(this.rootDir, skillDir)) {
       throw invalidName(name);
@@ -133,13 +137,57 @@ export class SkillRegistry {
     if (!file.isFile()) {
       throw new ToolError("SKILL_NOT_FOUND", `Skill not found: ${name}`);
     }
-    if (file.size > MAX_SKILL_BYTES) {
+
+    return { filePath, size: file.size };
+  }
+
+  private async inspectSkillMetadata(name: string): Promise<SkillMetadata> {
+    const skillFile = await this.inspectSkillFile(name);
+    if (skillFile.size > MAX_SKILL_BYTES) {
+      throw new ToolError("SKILL_TOO_LARGE", `Skill exceeds the ${MAX_SKILL_BYTES}-byte limit: ${name}`);
+    }
+
+    return {
+      name,
+      path: skillFile.filePath,
+      description: await this.readSkillDescription(name, skillFile),
+    };
+  }
+
+  private async readSkillDescription(name: string, skillFile: SkillFileStat): Promise<string> {
+    const handle = await fs.open(skillFile.filePath, "r");
+    try {
+      const readLength = Math.min(SKILL_METADATA_BYTES, skillFile.size);
+      const buffer = Buffer.alloc(readLength);
+      const { bytesRead } = await handle.read(buffer, 0, readLength, 0);
+      const metadata = buffer.subarray(0, bytesRead);
+      if (metadata.includes(0)) {
+        throw new ToolError("INVALID_SKILL_CONTENT", `Skill contains binary content: ${name}`);
+      }
+
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      const decoded = decoder.decode(metadata, { stream: bytesRead < skillFile.size });
+      const content = bytesRead < skillFile.size ? decoded : `${decoded}${decoder.decode()}`;
+      return descriptionFromContent(name, content);
+    } catch (error) {
+      if (error instanceof ToolError) {
+        throw error;
+      }
+      throw new ToolError("INVALID_SKILL_CONTENT", `Skill metadata is not valid UTF-8: ${name}`);
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+  }
+
+  private async readSkillContent(name: string): Promise<SkillFile> {
+    const skillFile = await this.inspectSkillFile(name);
+    if (skillFile.size > MAX_SKILL_BYTES) {
       throw new ToolError("SKILL_TOO_LARGE", `Skill exceeds the ${MAX_SKILL_BYTES}-byte limit: ${name}`);
     }
 
     let buffer: Buffer;
     try {
-      buffer = await fs.readFile(filePath);
+      buffer = await fs.readFile(skillFile.filePath);
     } catch {
       throw new ToolError("SKILL_LOAD_FAILED", `Could not read skill: ${name}`);
     }
@@ -157,6 +205,6 @@ export class SkillRegistry {
       throw new ToolError("INVALID_SKILL_CONTENT", `Skill is not valid UTF-8: ${name}`);
     }
 
-    return { filePath, content };
+    return { filePath: skillFile.filePath, content };
   }
 }
