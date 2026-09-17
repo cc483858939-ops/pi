@@ -8,5 +8,6 @@ import { writeTool } from "./write.ts";
 export const defaultTools: RegisteredTool[] = [readTool, writeTool, editTool, bashTool];
 
 export { bashTool, editTool, readTool, writeTool };
+export { createLoadSkillTool } from "./load-skill.ts";
 export type { RegisteredTool, ToolContext, ToolExecutionResult } from "./types.ts";
 export { defineTool, executeTool } from "./types.ts";

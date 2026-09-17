@@ -88,8 +88,45 @@ Without an argument, the agent reads `package.json` and reports the project name
 - `write`: atomically creates or replaces a project file, creating parent directories as needed.
 - `edit`: atomically replaces one unique literal text occurrence; zero or multiple matches fail without modifying the file.
 - `bash`: runs a shell command from the project root, captures bounded output, reports exit status, and terminates the process tree on timeout or abort.
+- `load_skill`: loads the instructions for one discovered local Skill by name.
 
 All file tools reject absolute paths, `..` escapes, and symbolic-link escapes. Existing targets are checked with `realpath`; new targets validate the nearest existing parent directory before creation.
+
+## Skills
+
+Mini Pi discovers local Skills from direct subdirectories of `skills/`. Each Skill has one file:
+
+```text
+skills/
+└── testing/
+    └── SKILL.md
+```
+
+The directory name is the Skill name. Names use lowercase letters, numbers, and hyphens. For example:
+
+```md
+# Testing
+
+Use this skill when validating code changes.
+
+- Add regression tests for confirmed bugs.
+- Run relevant tests.
+- Do not claim success without execution evidence.
+```
+
+Mini Pi scans Skills once at startup. Only each Skill's name and short description are added to the initial system prompt. When a listed Skill is relevant, the model can call `load_skill(name)`; the full `SKILL.md` then enters the next model round through the normal tool result and conversation history.
+
+For example:
+
+```text
+User task
+→ model sees "testing" in available skills
+→ model calls load_skill("testing")
+→ Mini Pi returns SKILL.md
+→ model follows it
+```
+
+Skill v1 does not provide remote Skills, automatic Skill-selection guarantees, persistent Skill state, a Skill marketplace, or MCP. Skills are local instructions rather than a security boundary; a malicious `SKILL.md` can influence the model's behavior, so only use Skill files you trust.
 
 ## Validation
 

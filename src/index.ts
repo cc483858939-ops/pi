@@ -1,8 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Agent, type AgentEvent } from "./agent/agent.ts";
+import { Agent, DEFAULT_SYSTEM_PROMPT, type AgentEvent } from "./agent/agent.ts";
 import { loadConfig } from "./config.ts";
 import { createChatClient } from "./llm/client.ts";
+import { SkillRegistry } from "./skills/registry.ts";
+import { buildSystemPrompt } from "./skills/prompt.ts";
+import { createLoadSkillTool } from "./tools/load-skill.ts";
 import { defaultTools } from "./tools/index.ts";
 
 function formatProgressEvent(event: AgentEvent): string | null {
@@ -38,11 +41,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       baseURL: config.baseURL,
       apiKey: config.apiKey,
     });
+    const skillRegistry = new SkillRegistry(path.join(process.cwd(), "skills"));
+    const skills = await skillRegistry.list();
     const agent = new Agent({
       client,
       model: config.model,
-      tools: defaultTools,
+      tools: [...defaultTools, createLoadSkillTool(skillRegistry)],
       maxRounds: config.maxRounds,
+      systemPrompt: buildSystemPrompt(DEFAULT_SYSTEM_PROMPT, skills),
       toolContext: {
         rootDir: process.cwd(),
         bashTimeoutMs: config.bashTimeoutMs,
