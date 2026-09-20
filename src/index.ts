@@ -5,6 +5,8 @@ import { loadConfig } from "./config.ts";
 import { createChatClient } from "./llm/client.ts";
 import { SkillRegistry } from "./skills/registry.ts";
 import { buildSystemPrompt } from "./skills/prompt.ts";
+import { loadMcpConfig } from "./mcp/config.ts";
+import { McpManager } from "./mcp/manager.ts";
 import { createLoadSkillTool } from "./tools/load-skill.ts";
 import { defaultTools } from "./tools/index.ts";
 
@@ -35,6 +37,8 @@ function printProgress(event: AgentEvent): void {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   let fatalEventPrinted = false;
+  let primaryFailure = false;
+  let mcpManager: McpManager | undefined;
   try {
     const config = loadConfig();
     const client = createChatClient({
@@ -43,10 +47,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     });
     const skillRegistry = new SkillRegistry(path.join(process.cwd(), "skills"));
     const skills = await skillRegistry.list();
+    const mcpServers = await loadMcpConfig(process.cwd());
+    mcpManager = new McpManager(mcpServers);
+    const mcp = await mcpManager.connect();
+    for (const failure of mcp.failures) {
+      console.error(`[mcp:failed] ${failure.server}: ${failure.message}`);
+    }
     const agent = new Agent({
       client,
       model: config.model,
-      tools: [...defaultTools, createLoadSkillTool(skillRegistry)],
+      tools: [...defaultTools, createLoadSkillTool(skillRegistry), ...mcp.tools],
       maxRounds: config.maxRounds,
       systemPrompt: buildSystemPrompt(DEFAULT_SYSTEM_PROMPT, skills),
       toolContext: {
@@ -72,10 +82,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       printProgress(next.value);
     }
   } catch (error: unknown) {
+    primaryFailure = true;
     if (!fatalEventPrinted) {
       console.error(error instanceof Error ? error.message : String(error));
     }
     process.exitCode = 1;
+  } finally {
+    if (mcpManager !== undefined) {
+      try {
+        await mcpManager.close();
+      } catch (error: unknown) {
+        if (!primaryFailure) {
+          console.error(`[mcp:close] ${error instanceof Error ? error.message : String(error)}`);
+          process.exitCode = 1;
+        }
+      }
+    }
   }
 }
 

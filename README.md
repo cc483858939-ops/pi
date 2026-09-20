@@ -133,7 +133,26 @@ User task
 → model follows it
 ```
 
-Frontmatter can preserve optional `license`, `compatibility`, `metadata`, and `allowed-tools` fields. `allowed-tools` is parsed as metadata but is not enforced by Mini Pi. Skill v1 does not provide remote Skills, automatic Skill-selection guarantees, persistent Skill state, a Skill marketplace, or MCP. Skills are local instructions rather than a security boundary; a malicious `SKILL.md` can influence the model's behavior, so only use Skill files you trust.
+Frontmatter can preserve optional `license`, `compatibility`, `metadata`, and `allowed-tools` fields. `allowed-tools` is parsed as metadata but is not enforced by Mini Pi. Skill v1 does not provide remote Skills, automatic Skill-selection guarantees, persistent Skill state, or a Skill marketplace. Skills are local instructions rather than a security boundary; a malicious `SKILL.md` can influence the model's behavior, so only use Skill files you trust.
+
+## MCP servers
+
+Mini Pi can discover tools from local MCP servers over stdio at startup. Put a `.mcp.json` file in the project root:
+
+```json
+{
+  "mcpServers": {
+    "demo": {
+      "command": "node",
+      "args": ["./test/fixtures/mcp-stdio-server.mjs"]
+    }
+  }
+}
+```
+
+Server names and tool names are namespaced into deterministic `mcp__...` names. Mini Pi performs one `tools/list` snapshot during startup, starts each configured server as a child process, and isolates discovery failures so another server can still provide tools. Restart Mini Pi after changing a server's tools or its configuration. The configured commands run with the current operating-system user's permissions; only use MCP configuration and servers you trust.
+
+This milestone supports stdio transport, `tools/list`, `tools/call`, multiple servers, bounded results, and optional SDK version negotiation. Streamable HTTP, OAuth, resources, prompts, Tasks, Apps, elicitation, sampling, roots, and dynamic tool refresh are not implemented.
 
 ## Validation
 
@@ -156,7 +175,7 @@ This runtime intentionally does not implement Docker or OS-level sandboxing, com
 - No TUI
 - Runtime lifecycle events are available, but model token streaming and a streaming UI are not implemented
 - No sessions, branching, or context compaction
-- No MCP or extensions
+- No MCP transports beyond stdio or MCP features beyond tool discovery and calls
 - No provider or model selection UI
 - No multi-agent execution
 - Tool calls run sequentially
