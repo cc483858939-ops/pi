@@ -25,9 +25,17 @@ function skillDocument(name: string, description: string, body = `# ${name}\n`):
   return `---\nname: ${name}\ndescription: ${description}\n---\n${body}`;
 }
 
-async function skipIfSymlinksUnavailable(t: TestContext, target: string, link: string): Promise<boolean> {
+type SymlinkKind = "dir" | "file";
+
+async function skipIfSymlinksUnavailable(
+  t: TestContext,
+  target: string,
+  link: string,
+  kind: SymlinkKind,
+): Promise<boolean> {
   try {
-    await symlink(target, link, process.platform === "win32" ? "junction" : "dir");
+    const type = process.platform === "win32" && kind === "dir" ? "junction" : kind;
+    await symlink(target, link, type);
     return false;
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
@@ -251,7 +259,7 @@ test("does not discover Skills through a symlinked skills root", async (t) => {
       skillDocument("malicious", "External Skill that must not be discovered.", "# Malicious\n"),
       "utf8",
     );
-    if (await skipIfSymlinksUnavailable(t, externalRoot, path.join(projectRoot, "skills"))) return;
+    if (await skipIfSymlinksUnavailable(t, externalRoot, path.join(projectRoot, "skills"), "dir")) return;
 
     const skills = await new SkillRegistry(path.join(projectRoot, "skills")).list();
 
@@ -268,7 +276,7 @@ test("does not follow a symlinked Skill directory", async (t) => {
   try {
     await mkdir(path.join(externalRoot, "malicious"));
     await writeFile(path.join(externalRoot, "malicious", "SKILL.md"), skillDocument("malicious", "External."), "utf8");
-    if (await skipIfSymlinksUnavailable(t, path.join(externalRoot, "malicious"), path.join(skillsRoot, "malicious"))) return;
+    if (await skipIfSymlinksUnavailable(t, path.join(externalRoot, "malicious"), path.join(skillsRoot, "malicious"), "dir")) return;
 
     const skills = await new SkillRegistry(skillsRoot).list();
 
@@ -286,7 +294,7 @@ test("does not follow a symlinked SKILL.md", async (t) => {
     await mkdir(path.join(skillsRoot, "testing"));
     const externalFile = path.join(externalRoot, "SKILL.md");
     await writeFile(externalFile, skillDocument("testing", "External."), "utf8");
-    if (await skipIfSymlinksUnavailable(t, externalFile, path.join(skillsRoot, "testing", "SKILL.md"))) return;
+    if (await skipIfSymlinksUnavailable(t, externalFile, path.join(skillsRoot, "testing", "SKILL.md"), "file")) return;
 
     const skills = await new SkillRegistry(skillsRoot).list();
 
