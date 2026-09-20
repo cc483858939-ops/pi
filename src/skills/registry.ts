@@ -105,6 +105,19 @@ export class SkillRegistry {
   }
 
   private async discover(): Promise<SkillMetadata[]> {
+    let root: import("node:fs").Stats;
+    try {
+      root = await fs.lstat(this.rootDir);
+    } catch (error) {
+      if (isMissing(error) || (error instanceof Error && "code" in error && error.code === "ENOTDIR")) {
+        return [];
+      }
+      throw error;
+    }
+    if (root.isSymbolicLink() || !root.isDirectory()) {
+      return [];
+    }
+
     let entries: import("node:fs").Dirent[];
     try {
       entries = await fs.readdir(this.rootDir, { withFileTypes: true });

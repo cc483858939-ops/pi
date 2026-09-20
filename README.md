@@ -94,7 +94,7 @@ All file tools reject absolute paths, `..` escapes, and symbolic-link escapes. E
 
 ## Skills
 
-Mini Pi discovers local Skills from direct subdirectories of `skills/`. Each Skill has one file:
+Mini Pi discovers local Skills from direct subdirectories of `skills/`. Each Skill contains at minimum a `SKILL.md` file:
 
 ```text
 skills/

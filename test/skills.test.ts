@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { Agent, type AgentEvent, type AgentRunResult } from "../src/agent/agent.ts";
 import type {
   ChatClient,
@@ -23,6 +23,20 @@ function context(rootDir: string): ToolContext {
 
 function skillDocument(name: string, description: string, body = `# ${name}\n`): string {
   return `---\nname: ${name}\ndescription: ${description}\n---\n${body}`;
+}
+
+async function skipIfSymlinksUnavailable(t: TestContext, target: string, link: string): Promise<boolean> {
+  try {
+    await symlink(target, link, process.platform === "win32" ? "junction" : "dir");
+    return false;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    if (code === "EPERM" || code === "EACCES" || code === "UNKNOWN") {
+      t.skip("symbolic links are unavailable in this environment");
+      return true;
+    }
+    throw error;
+  }
 }
 
 function assistant(
@@ -213,6 +227,74 @@ test("validates Skill names, descriptions, compatibility, and metadata mappings"
 test("returns an empty list when the skills root is missing", async () => {
   const root = path.join(os.tmpdir(), `mini-pi-missing-skills-${Date.now()}-${Math.random()}`);
   assert.deepEqual(await new SkillRegistry(root).list(), []);
+});
+
+test("returns an empty list when the skills root is not a directory", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-parent-"));
+  try {
+    const root = path.join(parent, "skills");
+    await writeFile(root, "not a directory", "utf8");
+
+    assert.deepEqual(await new SkillRegistry(root).list(), []);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("does not discover Skills through a symlinked skills root", async (t) => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-project-"));
+  const externalRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-external-skills-"));
+  try {
+    await mkdir(path.join(externalRoot, "malicious"));
+    await writeFile(
+      path.join(externalRoot, "malicious", "SKILL.md"),
+      skillDocument("malicious", "External Skill that must not be discovered.", "# Malicious\n"),
+      "utf8",
+    );
+    if (await skipIfSymlinksUnavailable(t, externalRoot, path.join(projectRoot, "skills"))) return;
+
+    const skills = await new SkillRegistry(path.join(projectRoot, "skills")).list();
+
+    assert.deepEqual(skills, []);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(externalRoot, { recursive: true, force: true });
+  }
+});
+
+test("does not follow a symlinked Skill directory", async (t) => {
+  const skillsRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  const externalRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-external-skill-"));
+  try {
+    await mkdir(path.join(externalRoot, "malicious"));
+    await writeFile(path.join(externalRoot, "malicious", "SKILL.md"), skillDocument("malicious", "External."), "utf8");
+    if (await skipIfSymlinksUnavailable(t, path.join(externalRoot, "malicious"), path.join(skillsRoot, "malicious"))) return;
+
+    const skills = await new SkillRegistry(skillsRoot).list();
+
+    assert.deepEqual(skills, []);
+  } finally {
+    await rm(skillsRoot, { recursive: true, force: true });
+    await rm(externalRoot, { recursive: true, force: true });
+  }
+});
+
+test("does not follow a symlinked SKILL.md", async (t) => {
+  const skillsRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  const externalRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-external-skill-"));
+  try {
+    await mkdir(path.join(skillsRoot, "testing"));
+    const externalFile = path.join(externalRoot, "SKILL.md");
+    await writeFile(externalFile, skillDocument("testing", "External."), "utf8");
+    if (await skipIfSymlinksUnavailable(t, externalFile, path.join(skillsRoot, "testing", "SKILL.md"))) return;
+
+    const skills = await new SkillRegistry(skillsRoot).list();
+
+    assert.deepEqual(skills, []);
+  } finally {
+    await rm(skillsRoot, { recursive: true, force: true });
+    await rm(externalRoot, { recursive: true, force: true });
+  }
 });
 
 test("loads a skill body and metadata on demand", async () => {
