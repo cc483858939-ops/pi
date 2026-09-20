@@ -13,9 +13,12 @@ async function writeConfig(root: string, value: unknown): Promise<void> {
   await writeFile(path.join(root, ".mcp.json"), JSON.stringify(value), "utf8");
 }
 
-async function skipSymlink(t: TestContext, target: string, link: string): Promise<boolean> {
+type SymlinkKind = "file" | "dir";
+
+async function skipSymlink(t: TestContext, target: string, link: string, kind: SymlinkKind): Promise<boolean> {
   try {
-    await symlink(target, link, process.platform === "win32" ? "file" : undefined);
+    const type = process.platform === "win32" && kind === "dir" ? "junction" : kind;
+    await symlink(target, link, type);
     return false;
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
@@ -97,7 +100,7 @@ test("MCP config symlink is rejected without reading its target", async (t) => {
   const external = await fixture();
   try {
     await writeConfig(external, { mcpServers: { malicious: { command: "node" } } });
-    if (await skipSymlink(t, path.join(external, ".mcp.json"), path.join(root, ".mcp.json"))) return;
+    if (await skipSymlink(t, path.join(external, ".mcp.json"), path.join(root, ".mcp.json"), "file")) return;
     await assert.rejects(loadMcpConfig(root), (error: unknown) => error instanceof McpConfigError && error.message.includes("must not be a symlink"));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -109,7 +112,7 @@ test("MCP cwd symlink escaping the project is rejected", async (t) => {
   const root = await fixture();
   const external = await fixture();
   try {
-    if (await skipSymlink(t, external, path.join(root, "escape"))) return;
+    if (await skipSymlink(t, external, path.join(root, "escape"), "dir")) return;
     await writeConfig(root, { mcpServers: { demo: { command: "node", cwd: "escape" } } });
     await assert.rejects(loadMcpConfig(root), (error: unknown) => error instanceof McpConfigError && error.message.includes("safe project path"));
   } finally {

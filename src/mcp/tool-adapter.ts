@@ -10,12 +10,16 @@ function safeJsonValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value !== "object") return String(value);
   if (seen.has(value)) return "[circular]";
   seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => safeJsonValue(item, seen));
+  if (Array.isArray(value)) {
+    const output = value.map((item) => safeJsonValue(item, seen));
+    seen.delete(value);
+    return output;
+  }
   const output: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    if (key === "data" && typeof item === "string" && item.length > 1024) continue;
     output[key] = safeJsonValue(item, seen);
   }
+  seen.delete(value);
   return output;
 }
 
@@ -35,7 +39,7 @@ function compactNonTextContent(content: unknown[]): unknown[] {
     if (typeof item !== "object" || item === null || (item as Record<string, unknown>).type === "text") return [];
     const value = item as Record<string, unknown>;
     const compact: Record<string, unknown> = {};
-    for (const key of ["type", "mimeType", "uri", "resource", "annotations"]) {
+    for (const key of ["type", "mimeType", "uri"]) {
       if (value[key] !== undefined) compact[key] = value[key];
     }
     return Object.keys(compact).length === 0 ? [] : [compact];
@@ -89,7 +93,7 @@ export function createMcpTool(server: string, originalName: string, description:
       }
       const content = Array.isArray(result.content) ? result.content.map((item) => safeJsonValue(item)) : [];
       if (result.isError === true) {
-        throw new ToolError("MCP_TOOL_ERROR", `MCP tool '${originalName}' reported an error.`, { content: boundedResult({ server, tool: originalName, content }, Math.min(context.maxOutputBytes, 4096)).content });
+        throw new ToolError("MCP_TOOL_ERROR", `MCP tool '${originalName}' reported an error.`, boundedResult({ server, tool: originalName, content }, context.maxOutputBytes));
       }
       return boundedResult({ server, tool: originalName, content, ...(result.structuredContent === undefined ? {} : { structuredContent: safeJsonValue(result.structuredContent) }) }, context.maxOutputBytes);
     },

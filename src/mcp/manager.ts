@@ -8,6 +8,16 @@ function messageOf(error: unknown): string {
   return firstLine.slice(0, 300) || "unknown MCP error";
 }
 
+export class McpCloseError extends Error {
+  readonly failureCount: number;
+
+  constructor(failureCount: number) {
+    super(`Failed to close ${failureCount} MCP client${failureCount === 1 ? "" : "s"}.`);
+    this.name = "McpCloseError";
+    this.failureCount = failureCount;
+  }
+}
+
 function defaultClientFactory(config: McpStdioServerConfig): { client: McpClientLike; transport: import("@modelcontextprotocol/client").Transport } {
   const transport = new StdioClientTransport({ command: config.command, args: config.args, cwd: config.cwd ?? process.cwd(), env: { ...getDefaultEnvironment(), ...config.env }, stderr: "ignore" });
   const client = new Client({ name: "mini-pi", version: "0.2.0" }, { inputRequired: { autoFulfill: false }, ...(config.versionNegotiation === "auto" ? { versionNegotiation: { mode: "auto" as const } } : {}) });
@@ -58,6 +68,10 @@ export class McpManager {
     this.closed = true;
     const clients = [...this.clients];
     this.clients.clear();
-    await Promise.allSettled(clients.map((client) => client.close()));
+    const results = await Promise.allSettled(clients.map((client) => client.close()));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failures.length > 0) {
+      throw new McpCloseError(failures.length);
+    }
   }
 }
