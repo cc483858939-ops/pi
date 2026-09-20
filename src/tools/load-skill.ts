@@ -1,4 +1,7 @@
+import fs from "node:fs/promises";
 import { SkillRegistry } from "../skills/registry.ts";
+import { ToolError } from "../utils/errors.ts";
+import { projectRelativePath } from "./path-security.ts";
 import { assertObject, assertOnlyKeys, defineTool, requireString, type RegisteredTool } from "./types.ts";
 
 export interface LoadSkillArgs {
@@ -8,6 +11,7 @@ export interface LoadSkillArgs {
 export interface LoadSkillResult {
   name: string;
   description: string;
+  root: string;
   content: string;
 }
 
@@ -28,11 +32,18 @@ export function createLoadSkillTool(registry: SkillRegistry): RegisteredTool {
       assertOnlyKeys(value, ["name"]);
       return { name: requireString(value, "name", { nonEmpty: true }) };
     },
-    async execute(args) {
+    async execute(args, context) {
       const skill = await registry.load(args.name);
+      let root: string;
+      try {
+        root = await projectRelativePath(context.rootDir, await fs.realpath(skill.rootDir));
+      } catch {
+        throw new ToolError("SKILL_OUTSIDE_PROJECT", `Skill root is outside the current project: ${skill.name}`);
+      }
       return {
         name: skill.name,
         description: skill.description,
+        root,
         content: skill.content,
       };
     },

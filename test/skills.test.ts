@@ -11,13 +11,18 @@ import type {
   ChatRequest,
   ChatResponse,
 } from "../src/llm/client.ts";
-import { SkillRegistry, MAX_SKILL_BYTES, SKILL_METADATA_BYTES } from "../src/skills/registry.ts";
+import { parseSkillDocument } from "../src/skills/parser.ts";
+import { SkillRegistry, MAX_SKILL_BYTES } from "../src/skills/registry.ts";
 import { buildSystemPrompt } from "../src/skills/prompt.ts";
 import { createLoadSkillTool } from "../src/tools/load-skill.ts";
 import { executeTool, type ToolContext } from "../src/tools/types.ts";
 
 function context(rootDir: string): ToolContext {
   return { rootDir, bashTimeoutMs: 5000, maxOutputBytes: 4096 };
+}
+
+function skillDocument(name: string, description: string, body = `# ${name}\n`): string {
+  return `---\nname: ${name}\ndescription: ${description}\n---\n${body}`;
 }
 
 function assistant(
@@ -83,17 +88,125 @@ test("discovers valid direct skills in deterministic order", async () => {
     await mkdir(path.join(root, "missing-file"));
     await mkdir(path.join(root, "code_review"));
     await mkdir(path.join(root, "backend", "testing"), { recursive: true });
-    await writeFile(path.join(root, "testing", "SKILL.md"), "# Testing\n\nValidate changes.\n", "utf8");
-    await writeFile(path.join(root, "code-review", "SKILL.md"), "# Code Review\n\nReview changes.\n", "utf8");
-    await writeFile(path.join(root, "backend", "testing", "SKILL.md"), "# Nested\n", "utf8");
+    await writeFile(path.join(root, "testing", "SKILL.md"), skillDocument("testing", "Validate changes.", "# Testing\n"), "utf8");
+    await writeFile(path.join(root, "code-review", "SKILL.md"), skillDocument("code-review", "Review changes.", "# Code Review\n"), "utf8");
+    await writeFile(path.join(root, "backend", "testing", "SKILL.md"), skillDocument("testing", "Nested.", "# Nested\n"), "utf8");
     await writeFile(path.join(root, "random.txt"), "ignore me", "utf8");
 
     const skills = await new SkillRegistry(root).list();
 
     assert.deepEqual(skills.map((skill) => skill.name), ["code-review", "testing"]);
-    assert.deepEqual(skills.map((skill) => skill.description), ["Code Review", "Testing"]);
+    assert.deepEqual(skills.map((skill) => skill.description), ["Review changes.", "Validate changes."]);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ignores missing, malformed, and mismatched Skill documents during discovery", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  try {
+    await mkdir(path.join(root, "valid"));
+    await mkdir(path.join(root, "malformed"));
+    await mkdir(path.join(root, "missing-name"));
+    await mkdir(path.join(root, "missing-description"));
+    await mkdir(path.join(root, "mismatch"));
+    await mkdir(path.join(root, "missing-file"));
+    await writeFile(path.join(root, "valid", "SKILL.md"), skillDocument("valid", "Valid Skill."), "utf8");
+    await writeFile(path.join(root, "malformed", "SKILL.md"), "---\nname: [broken\ndescription: Bad\n---\n", "utf8");
+    await writeFile(path.join(root, "missing-name", "SKILL.md"), "---\ndescription: Missing name.\n---\n", "utf8");
+    await writeFile(path.join(root, "missing-description", "SKILL.md"), "---\nname: missing-description\n---\n", "utf8");
+    await writeFile(path.join(root, "mismatch", "SKILL.md"), skillDocument("other", "Wrong directory."), "utf8");
+
+    const skills = await new SkillRegistry(root).list();
+
+    assert.deepEqual(skills.map((skill) => skill.name), ["valid"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parses YAML metadata instead of Markdown headings", () => {
+  const content = `---
+name: testing
+description: Correct YAML description.
+license: Apache-2.0
+compatibility: Requires git
+metadata:
+  author: example
+  version: "1.0"
+allowed-tools: "Bash(git:*) Read"
+future-field: preserved-for-forward-compatibility
+---
+
+# Completely Different Heading
+`;
+
+  assert.deepEqual(parseSkillDocument(content, "testing"), {
+    name: "testing",
+    description: "Correct YAML description.",
+    license: "Apache-2.0",
+    compatibility: "Requires git",
+    metadata: { author: "example", version: "1.0" },
+    allowedTools: "Bash(git:*) Read",
+    content,
+  });
+});
+
+test("rejects invalid frontmatter and standard metadata", () => {
+  const invalidDocuments = [
+    "# Testing\nDo stuff.\n",
+    "---\nname: [broken\ndescription: Bad\n---\n",
+    "---\ndescription: Missing name.\n---\n",
+    "---\nname: testing\n---\n",
+    "---\nname: testing\ndescription: \"\"\n---\n",
+    "---\nname: testing\ndescription: [not a string]\n---\n",
+    "---\nname: testing\ndescription: *missing\n---\n",
+  ];
+  for (const content of invalidDocuments) {
+    assert.throws(
+      () => parseSkillDocument(content, "testing"),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SKILL_METADATA",
+    );
+  }
+
+  const spaced = parseSkillDocument("---\nname: testing\ndescription: \"  Keep spaces  \"\n---\n", "testing");
+  assert.equal(spaced.description, "  Keep spaces  ");
+});
+
+test("validates Skill names, descriptions, compatibility, and metadata mappings", () => {
+  const validName = "a".repeat(64);
+  assert.equal(parseSkillDocument(skillDocument(validName, "Valid."), validName).name, validName);
+  for (const name of ["Testing", "-test", "test-", "test--foo", "test_foo"]) {
+    assert.throws(
+      () => parseSkillDocument(skillDocument(name, "Invalid."), name),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SKILL_METADATA",
+    );
+  }
+  assert.throws(
+    () => parseSkillDocument(skillDocument("code-review", "Wrong directory."), "testing"),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SKILL_METADATA",
+  );
+  assert.throws(
+    () => parseSkillDocument(skillDocument("a".repeat(65), "Too long."), "a".repeat(65)),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SKILL_METADATA",
+  );
+
+  assert.equal(parseSkillDocument(skillDocument("testing", "x".repeat(1024)), "testing").description.length, 1024);
+  assert.equal(parseSkillDocument(skillDocument("testing", "😀".repeat(1024)), "testing").description, "😀".repeat(1024));
+  assert.throws(() => parseSkillDocument(skillDocument("testing", "x".repeat(1025)), "testing"));
+  assert.throws(() => parseSkillDocument(skillDocument("testing", "😀".repeat(1025)), "testing"));
+  assert.equal(parseSkillDocument(skillDocument("testing", "Testing."), "testing").name, "testing");
+  for (const compatibility of ["", " ", "x".repeat(501)]) {
+    assert.throws(
+      () => parseSkillDocument(`---\nname: testing\ndescription: Testing.\ncompatibility: ${JSON.stringify(compatibility)}\n---\n`, "testing"),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SKILL_METADATA",
+    );
+  }
+  for (const metadata of ["version: 1", "nested:\n    key: value", "items:\n  - value"]) {
+    assert.throws(
+      () => parseSkillDocument(`---\nname: testing\ndescription: Testing.\nmetadata:\n  ${metadata}\n---\n`, "testing"),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SKILL_METADATA",
+    );
   }
 });
 
@@ -105,14 +218,14 @@ test("returns an empty list when the skills root is missing", async () => {
 test("loads a skill body and metadata on demand", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
   try {
-    const content = "# Testing\n\nValidate changes.\n";
+    const content = skillDocument("testing", "Validate changes.", "# Testing\n");
     await mkdir(path.join(root, "testing"));
     await writeFile(path.join(root, "testing", "SKILL.md"), content, "utf8");
 
     const loaded = await new SkillRegistry(root).load("testing");
 
     assert.equal(loaded.name, "testing");
-    assert.equal(loaded.description, "Testing");
+    assert.equal(loaded.description, "Validate changes.");
     assert.equal(loaded.content, content);
     assert.equal(loaded.path, path.join(root, "testing", "SKILL.md"));
   } finally {
@@ -146,8 +259,8 @@ test("excludes oversized skills and rejects invalid full content", async () => {
     await mkdir(path.join(root, "binary"));
     await mkdir(path.join(root, "invalid"));
     await writeFile(path.join(root, "large", "SKILL.md"), Buffer.alloc(MAX_SKILL_BYTES + 1, 0x61));
-    await writeFile(path.join(root, "binary", "SKILL.md"), "# Binary\n", "utf8");
-    await writeFile(path.join(root, "invalid", "SKILL.md"), "# Invalid\n", "utf8");
+    await writeFile(path.join(root, "binary", "SKILL.md"), skillDocument("binary", "Binary."), "utf8");
+    await writeFile(path.join(root, "invalid", "SKILL.md"), skillDocument("invalid", "Invalid."), "utf8");
     const registry = new SkillRegistry(root);
 
     const discovered = await registry.list();
@@ -175,15 +288,16 @@ test("discovers a large valid skill from bounded metadata", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
   try {
     await mkdir(path.join(root, "testing"));
-    const content = `# Testing\n\n${"x".repeat(SKILL_METADATA_BYTES * 2)}`;
-    assert.ok(Buffer.byteLength(content) > SKILL_METADATA_BYTES);
+    const prefix = "---\nname: testing\ndescription: Testing.\npadding: ";
+    const content = `${prefix}${"x".repeat(5000)}\n---\n# Testing\n`;
+    assert.ok(Buffer.byteLength(content) > 4096);
     assert.ok(Buffer.byteLength(content) < MAX_SKILL_BYTES);
     await writeFile(path.join(root, "testing", "SKILL.md"), content, "utf8");
 
     const skills = await new SkillRegistry(root).list();
 
     assert.deepEqual(skills.map((skill) => skill.name), ["testing"]);
-    assert.equal(skills[0]?.description, "Testing");
+    assert.equal(skills[0]?.description, "Testing.");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -193,16 +307,17 @@ test("accepts a UTF-8 character split at the metadata boundary", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
   try {
     await mkdir(path.join(root, "testing"));
-    const prefix = "# Testing\n\n";
-    const filler = "a".repeat(SKILL_METADATA_BYTES - Buffer.byteLength(prefix) - 1);
-    const content = `${prefix}${filler}你\n`;
-    assert.equal(Buffer.byteLength(prefix + filler), SKILL_METADATA_BYTES - 1);
+    const metadataBoundary = 4096;
+    const prefix = "---\nname: testing\ndescription: Testing.\npadding: ";
+    const filler = "a".repeat(metadataBoundary - Buffer.byteLength(prefix) - 1);
+    const content = `${prefix}${filler}你\n---\n# Testing\n`;
+    assert.equal(Buffer.byteLength(prefix + filler), metadataBoundary - 1);
     await writeFile(path.join(root, "testing", "SKILL.md"), content, "utf8");
 
     const skills = await new SkillRegistry(root).list();
 
     assert.deepEqual(skills.map((skill) => skill.name), ["testing"]);
-    assert.equal(skills[0]?.description, "Testing");
+    assert.equal(skills[0]?.description, "Testing.");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -214,7 +329,7 @@ test("does not load a Skill added after discovery", async () => {
     const registry = new SkillRegistry(root);
     assert.deepEqual(await registry.list(), []);
     await mkdir(path.join(root, "later"));
-    await writeFile(path.join(root, "later", "SKILL.md"), "# Later\n", "utf8");
+    await writeFile(path.join(root, "later", "SKILL.md"), skillDocument("later", "Later."), "utf8");
 
     await assert.rejects(
       () => registry.load("later"),
@@ -230,7 +345,7 @@ test("returns a controlled not-found failure when a discovered Skill is deleted"
   try {
     await mkdir(path.join(root, "testing"));
     const filePath = path.join(root, "testing", "SKILL.md");
-    await writeFile(filePath, "# Testing\n", "utf8");
+    await writeFile(filePath, skillDocument("testing", "Testing."), "utf8");
     const registry = new SkillRegistry(root);
     assert.deepEqual((await registry.list()).map((skill) => skill.name), ["testing"]);
     await rm(filePath);
@@ -249,14 +364,14 @@ test("reads modified content for a Skill discovered earlier", async () => {
   try {
     await mkdir(path.join(root, "testing"));
     const filePath = path.join(root, "testing", "SKILL.md");
-    await writeFile(filePath, "# Testing\nVersion A\n", "utf8");
+    await writeFile(filePath, skillDocument("testing", "Testing.", "# Testing\nVersion A\n"), "utf8");
     const registry = new SkillRegistry(root);
     await registry.list();
-    await writeFile(filePath, "# Testing\nVersion B\n", "utf8");
+    await writeFile(filePath, skillDocument("testing", "Testing.", "# Testing\nVersion B\n"), "utf8");
 
     const loaded = await registry.load("testing");
 
-    assert.equal(loaded.content, "# Testing\nVersion B\n");
+    assert.equal(loaded.content, skillDocument("testing", "Testing.", "# Testing\nVersion B\n"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -266,11 +381,11 @@ test("initializes discovery when load is called directly", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
   try {
     await mkdir(path.join(root, "testing"));
-    await writeFile(path.join(root, "testing", "SKILL.md"), "# Testing\n", "utf8");
+    await writeFile(path.join(root, "testing", "SKILL.md"), skillDocument("testing", "Testing."), "utf8");
 
     const loaded = await new SkillRegistry(root).load("testing");
 
-    assert.equal(loaded.content, "# Testing\n");
+    assert.equal(loaded.content, skillDocument("testing", "Testing."));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -280,7 +395,8 @@ test("load_skill uses the normal tool abstraction and returns controlled failure
   const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
   try {
     await mkdir(path.join(root, "testing"));
-    await writeFile(path.join(root, "testing", "SKILL.md"), "# Testing\nUse tests.\n", "utf8");
+    const content = skillDocument("testing", "Testing utilities.", "# Testing\nUse tests.\n");
+    await writeFile(path.join(root, "testing", "SKILL.md"), content, "utf8");
     const tool = createLoadSkillTool(new SkillRegistry(root));
 
     const success = await executeTool(tool, { name: "testing" }, context(root));
@@ -288,8 +404,9 @@ test("load_skill uses the normal tool abstraction and returns controlled failure
     if (success.ok) {
       assert.deepEqual(success.data, {
         name: "testing",
-        description: "Testing",
-        content: "# Testing\nUse tests.\n",
+        description: "Testing utilities.",
+        root: "testing",
+        content,
       });
     }
 
@@ -301,17 +418,79 @@ test("load_skill uses the normal tool abstraction and returns controlled failure
   }
 });
 
+test("load_skill returns a project-relative Skill root", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-project-"));
+  try {
+    const skillsRoot = path.join(projectRoot, "skills");
+    await mkdir(path.join(skillsRoot, "testing"), { recursive: true });
+    const content = skillDocument("testing", "Testing utilities.", "# Testing\n");
+    await writeFile(path.join(skillsRoot, "testing", "SKILL.md"), content, "utf8");
+    const tool = createLoadSkillTool(new SkillRegistry(skillsRoot));
+
+    const result = await executeTool(tool, { name: "testing" }, context(projectRoot));
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      const data = result.data as { root: string };
+      assert.equal(data.root, "skills/testing");
+      assert.ok(!data.root.includes("\\"));
+      assert.ok(!data.root.includes(projectRoot));
+    }
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects a Skill root outside the current project", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-project-"));
+  const skillsRoot = await mkdtemp(path.join(os.tmpdir(), "mini-pi-external-skills-"));
+  try {
+    await mkdir(path.join(skillsRoot, "testing"));
+    await writeFile(path.join(skillsRoot, "testing", "SKILL.md"), skillDocument("testing", "Testing."), "utf8");
+    const tool = createLoadSkillTool(new SkillRegistry(skillsRoot));
+
+    const result = await executeTool(tool, { name: "testing" }, context(projectRoot));
+
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, "SKILL_OUTSIDE_PROJECT");
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(skillsRoot, { recursive: true, force: true });
+  }
+});
+
+test("revalidates metadata when a discovered Skill changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
+  try {
+    await mkdir(path.join(root, "testing"));
+    const filePath = path.join(root, "testing", "SKILL.md");
+    await writeFile(filePath, skillDocument("testing", "Testing."), "utf8");
+    const registry = new SkillRegistry(root);
+    await registry.list();
+    await writeFile(filePath, skillDocument("wrong-name", "Testing."), "utf8");
+
+    await assert.rejects(
+      () => registry.load("testing"),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "INVALID_SKILL_METADATA",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("builds a compact lazy-loading skill catalog", () => {
   const base = "Base instructions.";
   const body = "# Testing\nFull skill instructions.";
   const prompt = buildSystemPrompt(base, [
-    { name: "testing", path: "testing/SKILL.md", description: "Testing" },
-    { name: "code-review", path: "code-review/SKILL.md", description: "Code Review" },
+    { name: "testing", path: "testing/SKILL.md", rootDir: "testing", description: "Testing" },
+    { name: "code-review", path: "code-review/SKILL.md", rootDir: "code-review", description: "Code Review" },
   ]);
 
   assert.ok(prompt.startsWith(base));
   assert.ok(prompt.includes("Available skills:"));
   assert.ok(prompt.indexOf("- code-review: Code Review") < prompt.indexOf("- testing: Testing"));
+  assert.ok(prompt.includes("resolve it relative to the root returned by load_skill"));
+  assert.ok(prompt.includes("skills/testing/references/TESTING.md"));
   assert.ok(!prompt.includes(body));
   assert.equal(buildSystemPrompt(base, []), base);
 });
@@ -319,7 +498,7 @@ test("builds a compact lazy-loading skill catalog", () => {
 test("loads a Skill through Agent events and the next model history", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mini-pi-skills-"));
   try {
-    const content = "# Testing\nUse tests before completion.\n";
+    const content = skillDocument("testing", "Testing utilities.", "# Testing\nUse tests before completion.\n");
     await mkdir(path.join(root, "testing"));
     await writeFile(path.join(root, "testing", "SKILL.md"), content, "utf8");
     const registry = new SkillRegistry(root);
@@ -353,15 +532,16 @@ test("loads a Skill through Agent events and the next model history", async () =
     assert.equal(firstSystem?.role, "system");
     if (firstSystem?.role === "system") {
       const systemContent = typeof firstSystem.content === "string" ? firstSystem.content : JSON.stringify(firstSystem.content);
-      assert.ok(systemContent.includes("- testing: Testing"));
+      assert.ok(systemContent.includes("- testing: Testing utilities."));
       assert.ok(!systemContent.includes("Use tests before completion."));
     }
     const toolMessage = client.calls[1]?.messages.at(-1);
     assert.equal(toolMessage?.role, "tool");
     if (toolMessage?.role === "tool") {
-      const payload = JSON.parse(toolMessage.content as string) as { ok: boolean; data: { content: string } };
+      const payload = JSON.parse(toolMessage.content as string) as { ok: boolean; data: { content: string; root: string } };
       assert.equal(payload.ok, true);
       assert.equal(payload.data.content, content);
+      assert.equal(payload.data.root, "testing");
     }
     assert.equal(consumed.result?.content, "done");
     assert.equal(consumed.error, undefined);

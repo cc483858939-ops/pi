@@ -1,3 +1,8 @@
+---
+name: code-review
+description: Reviews implementations and commits for correctness, regressions, and missing tests. Use when reviewing a code change, diff, commit, or implementation.
+---
+
 # Code Review
 
 Use this skill when reviewing an implementation or commit.

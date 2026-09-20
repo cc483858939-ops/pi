@@ -102,23 +102,26 @@ skills/
     └── SKILL.md
 ```
 
-The directory name is the Skill name. Names use lowercase letters, numbers, and hyphens. For example:
+The directory name is the Skill name. Names use lowercase letters, numbers, and hyphens. `SKILL.md` must begin with YAML frontmatter whose `name` matches the directory and whose `description` supplies the discovery and activation hint:
 
 ```md
+---
+name: testing
+description: Validates code changes. Use when modifying code or confirming that an implementation works.
+---
+
 # Testing
 
-Use this skill when validating code changes.
+Inspect existing tests before changing behavior.
 
-- Add regression tests for confirmed bugs.
-- Run relevant tests.
-- Do not claim success without execution evidence.
+See references/TESTING.md when additional testing conventions are needed.
 ```
 
 Mini Pi discovers the available Skill set once per process/runtime startup. Discovery reads only bounded metadata/header content from each `SKILL.md`; the full body is read only when `load_skill` loads that discovered Skill. Only each Skill's name and short description are added to the initial system prompt.
 
 A Skill must exist during discovery to be available. Skills created after startup are not available until Mini Pi is restarted. If an already-discovered `SKILL.md` is edited later, `load_skill` reads the current file contents; if it is deleted, the tool returns a controlled failure.
 
-When a listed Skill is relevant, the model can call `load_skill(name)`; the full `SKILL.md` then enters the next model round through the normal tool result and conversation history.
+When a listed Skill is relevant, the model can call `load_skill(name)`; the full `SKILL.md` and its project-relative `root` then enter the next model round through the normal tool result and conversation history. Relative references resolve from that Skill root, so `references/TESTING.md` under `skills/testing` is `skills/testing/references/TESTING.md`. Skills may keep progressive-disclosure resources under `scripts/`, `references/`, and `assets/`; existing `read` and `bash` tools access them after loading the Skill.
 
 For example:
 
@@ -130,7 +133,7 @@ User task
 → model follows it
 ```
 
-Skill v1 does not provide remote Skills, automatic Skill-selection guarantees, persistent Skill state, a Skill marketplace, or MCP. Skills are local instructions rather than a security boundary; a malicious `SKILL.md` can influence the model's behavior, so only use Skill files you trust.
+Frontmatter can preserve optional `license`, `compatibility`, `metadata`, and `allowed-tools` fields. `allowed-tools` is parsed as metadata but is not enforced by Mini Pi. Skill v1 does not provide remote Skills, automatic Skill-selection guarantees, persistent Skill state, a Skill marketplace, or MCP. Skills are local instructions rather than a security boundary; a malicious `SKILL.md` can influence the model's behavior, so only use Skill files you trust.
 
 ## Validation
 
